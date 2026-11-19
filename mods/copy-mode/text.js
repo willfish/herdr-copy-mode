@@ -129,8 +129,13 @@ export function terminalText(text, cols, total, bounds) {
       }
       return;
     }
-    for (const { line, cells, firstRow, lastRow } of streams) {
-      if (key === "aa" && resumeCommand.test(line)) {
+    for (const { line, firstRow, lastRow, cells } of streams) {
+      const innerFirst = cells.find(({ kind }) => kind);
+      if (key === "il" && innerFirst) {
+        yield { start: point(innerFirst), end: point(cells.findLast(({ kind }) => kind)) };
+      } else if (key === "al" && cells.length) {
+        yield wholeRows(first + firstRow, first + lastRow);
+      } else if (key === "aa" && resumeCommand.test(line)) {
         yield wholeRows(first + firstRow, first + lastRow);
       } else if (key === "au") {
         let i = 0;
@@ -189,6 +194,13 @@ export function terminalText(text, cols, total, bounds) {
     row: physicalRow,
     object(at, key) {
       if (key === "ii") return indentation(at);
+      if (key === "il" || key === "al") {
+        // These line objects are current-line objects and never seek ahead.
+        for (const range of ranges(key)) {
+          if (at.row >= range.start.row && at.row <= range.end.row) return range;
+        }
+        return null;
+      }
       const pos = cursorRank(at, physicalRow(at.row));
       let containing;
       let next;

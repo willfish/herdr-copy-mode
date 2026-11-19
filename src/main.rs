@@ -13,15 +13,15 @@ struct Action(Mode, &'static str, &'static str);
 const KEYS: &[&str] = &[
     "h", "j", "k", "l", "left", "down", "up", "right", "pageup", "pagedown", "ctrl-b", "ctrl-f",
     "ctrl-u", "ctrl-d", "0", "$", "home", "end", "^", "g", "G", "{", "}", "w", "b", "e", "W", "B",
-    "E", "v", "space", "V", "q", "escape", "y", "enter", "/", "a", "i", "au", "aa", "ii", "i{",
-    "a{",
+    "E", "v", "space", "V", "q", "escape", "y", "enter", "/", "a", "i", "au", "aa", "ii", "al",
+    "il", "i{", "a{",
 ];
 
 fn transition(mode: Mode, key: &'static str) -> Option<Action> {
     use Mode::*;
     let direction = match key {
         "a" | "i" if mode != Move => return Some(Action(mode, "prefix", key)),
-        "au" | "aa" | "ii" | "i{" | "a{" if mode != Move => {
+        "il" | "al" | "au" | "aa" | "ii" | "i{" | "a{" if mode != Move => {
             return Some(Action(Visual, "object", key));
         }
         "h" | "left" => "left",
@@ -131,7 +131,7 @@ mod tests {
                 assert_eq!(transition(mode, key), Some(Action(mode, "prefix", key)));
             }
         }
-        for key in ["au", "aa", "ii", "a{", "i{"] {
+        for key in ["au", "aa", "ii", "al", "il", "a{", "i{"] {
             assert_eq!(transition(Move, key), None);
             for mode in [Visual, Line] {
                 assert_eq!(transition(mode, key), Some(Action(Visual, "object", key)));

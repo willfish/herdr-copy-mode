@@ -14,7 +14,7 @@ Bind `Ctrl+B`, then `[`, in the terminal context. Start at the program cursor, o
 
 `v` or `Space` anchors characterwise selection. `V` selects the entire rendered row, and row motions extend the range in either direction. `w`/`b`/`e` distinguish punctuation; `W`/`B`/`E` split only on whitespace. Both families work before and during selection and can cross rows. `y` or `Enter` yanks only in visual mode, then exits. `q` or `Esc` cancels. Leaving clears the selection and restores the entry scroll offset. `/` exits copy mode, hands focus to the native find field and lets Herdr handle the query and next/previous matches.
 
-In visual mode, `au` selects a URL, `aa` selects the complete row or wrapped rows of a recognized agent resume command, and `ii` selects rows with at least as many leading spaces as the row at the cursor. Blank rows do not break an indentation block. `i{` selects inside balanced braces and `a{` includes the braces. Each object replaces the previous visual range, using the object under the cursor or seeking forward. Nothing is copied until an explicit yank.
+In visual mode, `il` selects from the first to the last non-space cell on the current line; `al` selects all cells on it. `au` selects a URL, `aa` selects the complete row or wrapped rows of a recognized agent resume command, and `ii` selects rows with at least as many leading spaces as the row at the cursor. Blank rows do not break an indentation block. `i{` selects inside balanced braces and `a{` includes the braces. URLs, agent commands and braces use the object at the cursor or seek forward; `il` and `al` never seek to another line. Each object replaces the previous visual range. Nothing is copied until an explicit yank.
 
 ## Built from
 
@@ -38,7 +38,7 @@ In visual mode, `au` selects a URL, `aa` selects the complete row or wrapped row
 - From a live synthetic terminal, press `Ctrl+B [` and move with `hjkl`. `v`, more movement and `y` copy the intended text without typing any of those keys into the program.
 - On `alpha.one   beta`, `0 v w y` copies `alpha.` and `0 v W y` copies `alpha.one   b`. The visual anchor stays fixed as the motion crosses the punctuation or whitespace.
 - `V` extends and contracts in both directions, including blank rows. Rapid movement followed immediately by `y` copies the final range.
-- `vau y` copies the URL without a trailing `),`; `vaa y` copies a resume command's full row including its prompt and leading spaces; `vii y` includes a blank row between equally indented lines but not the following outdented line.
+- `vil y` copies the text on the current line without leading or trailing padding; `val y` copies the full display row; `vau y` copies the URL without a trailing `),`; `vaa y` copies a resume command's full row including its prompt and leading spaces; `vii y` includes a blank row between equally indented lines but not the following outdented line.
 - From the live screen, move into scrollback and press `Esc`. The original viewport returns and the regular clipboard is unchanged.
 - `/` opens the same pane's find bar, an existing term is highlighted, and closing find returns ordinary keyboard input to the terminal.
 - The gallery preview shows a real selection in an isolated app window displaying synthetic content.

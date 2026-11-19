@@ -48,6 +48,22 @@ test("agent detection skips prose, unknown flags and short IDs", () => {
   assert.equal(model.object(at(5, 0), "aa"), null);
 });
 
+test("line objects select the current line only, with and without explicit padding", () => {
+  const model = text("  alpha beta  \nnext\n  \ntrailing", 16);
+  assert.deepEqual(model.object(at(0, 0), "al"), range(0, 0, 0, 15));
+  assert.deepEqual(model.object(at(0, 5), "il"), range(0, 2, 0, 11));
+  assert.equal(model.object(at(1, 0), "il").end.col > at(1, 0).col, true);
+  assert.equal(model.object(at(2, 0), "il"), null);
+  assert.deepEqual(model.object(at(2, 0), "al"), range(2, 0, 2, 15));
+  assert.equal(model.object(at(0, 0), "il")?.end.row, 0);
+});
+
+test("soft-wrapped line objects span every physical row of the logical line", () => {
+  const model = text("  a long wrapped line that is longer than sixteen cells here", 16);
+  assert.deepEqual(model.object(at(0, 0), "il"), range(0, 2, 3, 11));
+  assert.deepEqual(model.object(at(0, 0), "al"), range(0, 0, 3, 15));
+});
+
 test("loose indentation includes blank rows and inherits the logical indent on wraps", () => {
   const model = text("top\n  parent\n    nested here wraps\n\n    sibling\n  next\nout", 16);
   assert.deepEqual(model.object(at(1, 5), "ii"), range(1, 0, 6, 15));
