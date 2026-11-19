@@ -1,0 +1,8 @@
+[package]
+name = "herdr-copy-mode"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Key policy generator for the Herdr Desktop copy-mode mod"
+
+[dependencies]

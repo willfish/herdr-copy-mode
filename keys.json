@@ -1,0 +1,5 @@
+{
+  "terminal": {
+    "ctrl-b [": "mod.open:copy-mode"
+  }
+}
