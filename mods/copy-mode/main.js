@@ -1,20 +1,26 @@
 import { View, div } from "gpui-kit";
-import { closeOverlay, focused, nextCommand, panes, props, run, terminals } from "herdr";
+import { closeOverlay, focused, hc, nextCommand, panes, props, run, terminals } from "herdr";
+import { terminalText } from "./text.js";
 import { transitions } from "./transitions.js";
 
-const MAX_LINE_ROWS = 1000;
+const MAX_HISTORY_ROWS = 1000;
+const shifted = { "4": "$", "6": "^", "[": "{", "]": "}" };
 let session = 0;
 
 function keyName({ key, key_char, modifiers }) {
   if (modifiers.alt || modifiers.platform) return null;
   if (modifiers.control) return modifiers.shift ? null : `ctrl-${key}`;
   if (key === "space" || key_char === " ") return "space";
-  return key_char || (modifiers.shift && key.length === 1 ? key.toUpperCase() : key);
+  const ch = key_char || key;
+  return modifiers.shift && ch.length === 1 ? shifted[ch] ?? ch.toUpperCase() : ch;
 }
 
 function sameCell(a, b) {
-  return a.row === b.row && a.col === b.col;
+  return a?.row === b.row && a.col === b.col;
 }
+
+const clamp = (n, min, max) => Math.max(min, Math.min(n, max));
+const sameGeometry = (a, b) => a.cols === b.cols && a.height === b.height && a.primary === b.primary;
 
 export default class CopyMode extends View {
   init(_props, cx) {
@@ -48,7 +54,24 @@ export default class CopyMode extends View {
     // The program cursor may not be visible in an already scrolled pane.
     const at = scroll?.from_bottom ? { row: scroll.offset + scroll.len - 1, col: 0 } : "cursor";
     this.select(at);
-    this.ready = this.flush();
+    this.ready = this.initializeCursor();
+  }
+
+  async initializeCursor() {
+    // `end` supplies the last nonempty physical row, unlike hc's trimmed text.
+    // Take the measurement before the user can anchor a visual selection.
+    const grid = this.grid();
+    this.adjust("end");
+    await this.flush();
+    const initial = this.selection();
+    if (!initial) return;
+    this.cursor = initial.start;
+    this.select(this.cursor);
+    if (grid) {
+      this.textOrigin = { grid, last: initial.end.row };
+      this.scrollTo(grid.offset);
+    }
+    await this.flush();
   }
 
   flush() {
@@ -77,12 +100,30 @@ export default class CopyMode extends View {
     return pane?.terminal === this.terminal ? pane.scroll : null;
   }
 
-  select(at, mode = "cell") {
-    run("terminal.select", { terminal: this.terminal, at, mode });
+  grid() {
+    const terminal = terminals().find((t) => t.address === this.terminal);
+    const scroll = this.scroll();
+    const cols = terminal?.cols;
+    const height = scroll?.len ?? terminal?.rows;
+    if (!cols || !height) return null;
+    return { cols, height, total: scroll?.total ?? height, offset: scroll?.offset ?? 0, primary: !!scroll };
+  }
+
+  select(at) {
+    run("terminal.select", { terminal: this.terminal, at });
   }
 
   adjust(direction) {
     run("terminal.adjust_selection", { terminal: this.terminal, direction });
+  }
+
+  scrollTo(offset) {
+    const scroll = this.scroll();
+    if (scroll && scroll.offset !== offset) {
+      run("terminal.scroll", { terminal: this.terminal, lines: offset - scroll.offset });
+      return true;
+    }
+    return false;
   }
 
   cleanup() {
@@ -92,7 +133,7 @@ export default class CopyMode extends View {
     run("terminal.clear_selection", { terminal: this.terminal });
     // Restore from a known origin, even if Esc closed the popup with a native
     // edit still in flight. The desktop runs both requests after prior edits.
-    if (this.entryOffset != null) {
+    if (this.entryOffset != null && this.scroll()) {
       run("terminal.scroll", { terminal: this.terminal, to: "bottom" });
       if (this.entryOffset > 0) {
         run("terminal.scroll", { terminal: this.terminal, lines: -this.entryOffset });
@@ -122,126 +163,177 @@ export default class CopyMode extends View {
     });
   }
 
-  async anchorLine(at) {
-    this.select({ row: at.row, col: 0 });
-    this.adjust("line_end");
-    await this.flush();
-    const selected = this.selection();
-    if (selected) {
-      this.line = { anchor: at.row, row: at.row, lastCol: selected.end.col };
+  async readText(grid) {
+    const origin = this.textOrigin;
+    if (!origin || !sameGeometry(origin.grid, grid) || origin.grid.total !== grid.total) return null;
+    if (!this.textRead) {
+      // A history read on the alternate screen can send scroll input to the PTY.
+      const lines = grid.primary ? Math.min(MAX_HISTORY_ROWS, grid.total - grid.height) : 0;
+      this.textRead = hc(["read", this.terminal, "--json", "--lines", String(lines)])
+        .then(({ code, stdout }) => {
+          if (code !== 0) return null;
+          const { how, text } = JSON.parse(stdout);
+          if (how !== "screen" && !(grid.primary && how === "history")) return null;
+          const now = this.grid();
+          if (!now || !sameGeometry(grid, now) || now.total !== grid.total || typeof text !== "string") return null;
+          this.text = terminalText(text, grid.cols, text ? origin.last : -1, grid.total);
+          return this.text;
+        }).catch(() => null);
     }
+    return this.textRead;
   }
 
-  async moveLine(direction) {
-    const { anchor, row, lastCol } = this.line;
-    const scroll = this.scroll();
-    const visibleRows = scroll?.len ?? terminals().find((t) => t.address === this.terminal)?.rows;
-    if (!visibleRows) return;
-    const last = (scroll?.total ?? visibleRows) - 1;
-    const target = {
-      up: row - 1,
-      down: row + 1,
-      page_up: row - visibleRows,
-      page_down: row + visibleRows,
-      home: 0,
-      end: last,
-    }[direction];
-    const next = Math.max(0, anchor - MAX_LINE_ROWS + 1, Math.min(last, anchor + MAX_LINE_ROWS - 1, target));
-    if (next === row) return;
-
-    // Ghostty's down skips blank rows. Build the range from the last cell
-    // upward instead, so both edges are whole physical rows in either direction.
-    const low = Math.min(anchor, next);
-    const high = Math.max(anchor, next);
-    this.select({ row: high, col: lastCol });
-    let distance = high - low;
-    for (; scroll && distance >= visibleRows; distance -= visibleRows) this.adjust("page_up");
+  moveUp(distance, height) {
+    for (; distance >= height; distance -= height) this.adjust("page_up");
     for (; distance > 0; distance--) this.adjust("up");
-    this.adjust("line_start");
+  }
+
+  async renderCursor(grid, offset) {
+    const cursor = this.cursor;
+    if (this.mode === "move") {
+      this.select(cursor);
+      this.scrollTo(offset);
+      await this.flush();
+      return;
+    }
+    const anchor = this.anchor;
+    const line = this.mode === "line";
+    let [start, end] = anchor.row >= cursor.row ? [anchor, cursor] : [cursor, anchor];
+    if (line) {
+      start = { row: start.row, col: grid.cols - 1 };
+      end = { row: end.row, col: 0 };
+    }
+
+    // Native `down` skips blank rows; build from the lower cell on screen.
+    // A backwards native range still represents the same logical visual anchor.
+    const selection = this.selection();
+    const reuse = sameCell(selection?.start, start) && selection.end.row >= end.row;
+    const from = reuse ? selection.end : start;
+    if (!reuse) this.select(start);
+    this.moveUp(from.row - end.row, grid.height);
+    const edge = end.col === 0 || end.col === grid.cols - 1;
+    if (edge && from.col !== end.col) this.adjust(end.col ? "line_end" : "line_start");
     await this.flush();
     if (!this.selection()) return;
-    this.line.row = next;
-
-    // A bottom-to-top native range follows its upper edge. When extending
-    // downward, follow the actual copy cursor instead.
-    const view = this.scroll();
-    if (view && (next < view.offset || next >= view.offset + view.len)) {
-      const lines = next < view.offset ? next - view.offset : next - (view.offset + view.len - 1);
-      run("terminal.scroll", { terminal: this.terminal, lines });
-      await this.flush();
-    }
-  }
-
-  async moveWord(at, motion) {
-    const previous = motion === "previous_start";
-    this.select(at, "word");
-    await this.flush();
-    if (!this.target()) return;
-    const word = this.selection();
-    const edge = previous ? word?.start : word?.end;
-    let target = edge ?? at;
-
-    if (motion === "next_start" || !edge || sameCell(edge, at)) {
-      this.select(target);
-      this.adjust(previous ? "left" : "right");
-      await this.flush();
-      if (!this.target()) return;
-      target = this.selection()?.end ?? at;
-      if (motion !== "next_start" && !sameCell(target, at)) {
-        this.select(target, "word");
+    if (!edge && from.col !== end.col && !await this.seekColumn(end, start, grid) && this.target()) {
+      // An unoccupied cell can only be selected directly, not reached by
+      // native left/right. For a same-row range, try making it the fixed end.
+      if (start.row === end.row) {
+        this.select(end);
         await this.flush();
-        if (!this.target()) return;
-        const next = this.selection();
-        target = (previous ? next?.start : next?.end) ?? target;
+        if (!await this.seekColumn(start, end, grid) && this.target()) {
+          this.select(start);
+          await this.flush();
+        }
+      } else {
+        const row = this.text?.row(end.row);
+        // A trailing padded cell includes the same text as the right edge.
+        // Use the last column for ranges through padding, not the next row.
+        this.select(start);
+        this.moveUp(start.row - end.row, grid.height);
+        if (row && end.col > (row.at(-1)?.col ?? -1)) this.adjust("line_end");
+        await this.flush();
       }
     }
-    this.select(target);
-    await this.flush();
+    if (this.target() && this.scrollTo(offset)) await this.flush();
+  }
+
+  async seekColumn(target, fixed, grid) {
+    if (target.col === 0 || target.col === grid.cols - 1) {
+      if (this.selection()?.end.row !== target.row) return false;
+      this.adjust(target.col ? "line_end" : "line_start");
+      await this.flush();
+      return true;
+    }
+    let previousDirection = 0;
+    let reversed = false;
+    for (let tries = 0; tries < grid.cols && this.target(); tries++) {
+      const at = this.selection()?.end;
+      if (sameCell(at, target)) return true;
+      if (!at || at.row !== target.row) return false;
+      const dir = target.col > at.col ? 1 : -1;
+      if (previousDirection && dir !== previousDirection) {
+        if (reversed) return false;
+        reversed = true;
+      }
+      previousDirection = dir;
+      const low = Math.min(at.col, target.col);
+      const high = Math.max(at.col, target.col);
+      // Count only nonblank cells for the first batch. Ghostty may skip
+      // implicit blank cells but not occupied characters.
+      const row = this.text?.row(target.row);
+      const count = row?.filter(({ col, kind }) => kind && (dir > 0 ? col > low && col <= high : col >= low && col < high)).length ?? 0;
+      for (let i = 0; i < Math.max(1, count); i++) this.adjust(dir > 0 ? "right" : "left");
+      await this.flush();
+      const moved = this.selection();
+      if (!moved || !sameCell(moved.start, fixed) || sameCell(moved.end, at) || moved.end.row !== target.row) return false;
+      if ((moved.end.col - target.col) * dir > 0 && count <= 1) return false;
+    }
+    return false;
   }
 
   async apply(key) {
-    const selection = this.selection();
-    if (!selection) {
+    const grid = this.grid();
+    if (!grid || !this.cursor || !this.selection()) {
+      this.finish("cancel");
+      return;
+    }
+    if (this.textOrigin && !sameGeometry(this.textOrigin.grid, grid)) {
       this.finish("cancel");
       return;
     }
     const table = transitions[this.mode];
     if (!Object.hasOwn(table, key)) return;
     const [mode, action, direction] = table[key];
-    // A line's native end is its upper edge, not necessarily its moving row.
-    const cursor = this.mode === "line" && this.line
-      ? { row: this.line.row, col: 0 }
-      : selection.end;
     this.mode = mode;
+    const at = this.cursor;
+    let offset = grid.offset;
     switch (action) {
       case "anchor":
-        this.select(cursor);
-        await this.flush();
-        break;
       case "anchor_line":
-        await this.anchorLine(cursor);
+        this.anchor = at;
         break;
-      case "line":
-        if (this.line) await this.moveLine(direction);
+      case "text": {
+        const text = await this.readText(grid);
+        if (!this.target()) return;
+        const next = text?.motion(at, direction);
+        if (!next) return;
+        this.cursor = next;
         break;
-      case "word":
-        await this.moveWord(cursor, direction);
-        break;
-      case "move":
-      case "extend":
-        this.adjust(direction);
-        await this.flush();
-        if (action === "move") {
-          const moved = this.selection();
-          if (moved && !sameCell(moved.start, moved.end)) {
-            this.select(moved.end);
-            await this.flush();
+      }
+      case "move": {
+        let { row, col } = at;
+        switch (direction) {
+          case "left": col--; break;
+          case "right": col++; break;
+          case "up": row--; break;
+          case "down": row++; break;
+          case "line_start": col = 0; break;
+          case "home": row = 0; offset = 0; break;
+          case "end": row = grid.total - 1; offset = grid.total - grid.height; break;
+          default: {
+            const half = direction.startsWith("half");
+            const size = Math.max(1, half ? Math.floor(grid.height / 2) : grid.height - 2);
+            const step = direction.endsWith("up") ? -size : size;
+            row += step;
+            offset += step;
           }
         }
+        this.cursor = { row: clamp(row, 0, grid.total - 1), col: clamp(col, 0, grid.cols - 1) };
+        if (sameCell(at, this.cursor) && offset === grid.offset) return;
         break;
+      }
       default:
         this.finish(action);
+        return;
     }
+    if (this.anchor && mode !== "move") {
+      const min = Math.max(0, this.anchor.row - MAX_HISTORY_ROWS + 1);
+      const max = Math.min(grid.total - 1, this.anchor.row + MAX_HISTORY_ROWS - 1);
+      this.cursor = { ...this.cursor, row: clamp(this.cursor.row, min, max) };
+    }
+    offset = clamp(offset, this.cursor.row - grid.height + 1, this.cursor.row);
+    await this.renderCursor(grid, clamp(offset, 0, grid.total - grid.height));
   }
 
   finish(action) {

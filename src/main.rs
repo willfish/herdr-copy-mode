@@ -12,11 +12,11 @@ struct Action(Mode, &'static str, &'static str);
 
 const KEYS: &[&str] = &[
     "h", "j", "k", "l", "left", "down", "up", "right", "pageup", "pagedown", "ctrl-b", "ctrl-f",
-    "0", "$", "home", "end", "g", "G", "w", "b", "e", "v", "space", "V", "q", "escape", "y",
-    "enter", "/",
+    "ctrl-u", "ctrl-d", "0", "$", "home", "end", "^", "g", "G", "{", "}", "w", "b", "e", "W", "B",
+    "E", "v", "space", "V", "q", "escape", "y", "enter", "/",
 ];
 
-fn transition(mode: Mode, key: &str) -> Option<Action> {
+fn transition(mode: Mode, key: &'static str) -> Option<Action> {
     use Mode::*;
     let direction = match key {
         "h" | "left" => "left",
@@ -25,17 +25,17 @@ fn transition(mode: Mode, key: &str) -> Option<Action> {
         "l" | "right" => "right",
         "pageup" | "ctrl-b" => "page_up",
         "pagedown" | "ctrl-f" => "page_down",
+        "ctrl-u" => "half_up",
+        "ctrl-d" => "half_down",
         "0" | "home" => "line_start",
-        "$" | "end" => "line_end",
         "g" => "home",
         "G" => "end",
-        "w" | "b" | "e" if mode == Move => {
+        "$" | "end" | "^" | "{" | "}" | "w" | "b" | "e" | "W" | "B" | "E" => {
             let motion = match key {
-                "w" => "next_start",
-                "b" => "previous_start",
-                _ => "next_end",
+                "$" | "end" => "$",
+                _ => key,
             };
-            return Some(Action(mode, "word", motion));
+            return Some(Action(mode, "text", motion));
         }
         "v" | "space" => return Some(Action(Visual, "anchor", "")),
         "V" => return Some(Action(Line, "anchor_line", "")),
@@ -45,13 +45,7 @@ fn transition(mode: Mode, key: &str) -> Option<Action> {
         "/" => return Some(Action(mode, "search", "")),
         _ => return None,
     };
-    let action = match mode {
-        Move => "move",
-        Visual => "extend",
-        Line if matches!(direction, "left" | "right" | "line_start" | "line_end") => return None,
-        Line => "line",
-    };
-    Some(Action(mode, action, direction))
+    Some(Action(mode, "move", direction))
 }
 
 fn main() -> io::Result<()> {
@@ -100,27 +94,27 @@ mod tests {
     fn motion_extends_only_after_anchoring() {
         assert_eq!(transition(Move, "k"), Some(Action(Move, "move", "up")));
         assert_eq!(transition(Move, "v"), Some(Action(Visual, "anchor", "")));
-        assert_eq!(
-            transition(Visual, "k"),
-            Some(Action(Visual, "extend", "up"))
-        );
+        assert_eq!(transition(Visual, "k"), Some(Action(Visual, "move", "up")));
     }
 
     #[test]
     fn linewise_mode_moves_by_rows_and_can_yank() {
         assert_eq!(transition(Move, "V"), Some(Action(Line, "anchor_line", "")));
-        assert_eq!(transition(Line, "j"), Some(Action(Line, "line", "down")));
-        assert_eq!(transition(Line, "h"), None);
+        assert_eq!(transition(Line, "j"), Some(Action(Line, "move", "down")));
+        assert_eq!(transition(Line, "h"), Some(Action(Line, "move", "left")));
         assert_eq!(transition(Line, "y"), Some(Action(Line, "yank", "")));
     }
 
     #[test]
-    fn word_probes_cannot_replace_a_visual_anchor() {
-        assert_eq!(
-            transition(Move, "b"),
-            Some(Action(Move, "word", "previous_start"))
-        );
-        assert_eq!(transition(Visual, "b"), None);
-        assert_eq!(transition(Line, "b"), None);
+    fn text_motions_use_the_same_policy_with_or_without_an_anchor() {
+        for mode in [Move, Visual, Line] {
+            for key in ["w", "b", "e", "W", "B", "E", "{", "}", "^", "$"] {
+                assert_eq!(transition(mode, key), Some(Action(mode, "text", key)));
+            }
+            assert_eq!(
+                transition(mode, "ctrl-u"),
+                Some(Action(mode, "move", "half_up"))
+            );
+        }
     }
 }
