@@ -13,12 +13,17 @@ struct Action(Mode, &'static str, &'static str);
 const KEYS: &[&str] = &[
     "h", "j", "k", "l", "left", "down", "up", "right", "pageup", "pagedown", "ctrl-b", "ctrl-f",
     "ctrl-u", "ctrl-d", "0", "$", "home", "end", "^", "g", "G", "{", "}", "w", "b", "e", "W", "B",
-    "E", "v", "space", "V", "q", "escape", "y", "enter", "/",
+    "E", "v", "space", "V", "q", "escape", "y", "enter", "/", "a", "i", "au", "aa", "ii", "i{",
+    "a{",
 ];
 
 fn transition(mode: Mode, key: &'static str) -> Option<Action> {
     use Mode::*;
     let direction = match key {
+        "a" | "i" if mode != Move => return Some(Action(mode, "prefix", key)),
+        "au" | "aa" | "ii" | "i{" | "a{" if mode != Move => {
+            return Some(Action(Visual, "object", key));
+        }
         "h" | "left" => "left",
         "j" | "down" => "down",
         "k" | "up" => "up",
@@ -115,6 +120,22 @@ mod tests {
                 transition(mode, "ctrl-u"),
                 Some(Action(mode, "move", "half_up"))
             );
+        }
+    }
+
+    #[test]
+    fn text_objects_require_visual_mode() {
+        for key in ["a", "i"] {
+            assert_eq!(transition(Move, key), None);
+            for mode in [Visual, Line] {
+                assert_eq!(transition(mode, key), Some(Action(mode, "prefix", key)));
+            }
+        }
+        for key in ["au", "aa", "ii", "a{", "i{"] {
+            assert_eq!(transition(Move, key), None);
+            for mode in [Visual, Line] {
+                assert_eq!(transition(mode, key), Some(Action(Visual, "object", key)));
+            }
         }
     }
 }

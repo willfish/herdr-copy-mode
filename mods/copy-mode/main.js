@@ -138,7 +138,7 @@ export default class CopyMode extends View {
     cx.stop_propagation();
     if (this.finished) return;
     const key = keyName(event);
-    if (key == null || !Object.values(transitions).some((table) => Object.hasOwn(table, key))) return;
+    if (key == null) return;
     this.queue.push(key);
     if (this.draining) return;
     this.draining = true;
@@ -287,9 +287,16 @@ export default class CopyMode extends View {
       return;
     }
     const table = transitions[this.mode];
+    const objectKey = this.prefix && this.prefix + key;
+    this.prefix = null;
+    if (objectKey && Object.hasOwn(table, objectKey) && table[objectKey][1] === "object") key = objectKey;
     if (!Object.hasOwn(table, key)) return;
     const [mode, action, direction] = table[key];
-    this.mode = mode;
+    if (action === "prefix") {
+      this.prefix = direction;
+      return;
+    }
+    if (action !== "object") this.mode = mode;
     const at = this.cursor;
     let offset = grid.offset;
     switch (action) {
@@ -297,7 +304,8 @@ export default class CopyMode extends View {
       case "anchor_line":
         this.anchor = at;
         break;
-      case "text": {
+      case "text":
+      case "object": {
         const snapshot = await this.readText(grid);
         if (!this.target()) return;
         const now = this.grid();
@@ -306,10 +314,19 @@ export default class CopyMode extends View {
           return;
         }
         this.text = snapshot?.text;
-        const next = this.text?.motion(at, direction);
-        if (next) this.cursor = next;
+        if (action === "object") {
+          const range = this.text?.object(at, direction);
+          if (range && range.end.row - range.start.row < MAX_HISTORY_ROWS) {
+            this.mode = mode;
+            this.anchor = range.start;
+            this.cursor = range.end;
+          } else if (!snapshot?.adjusted) return;
+        } else {
+          const next = this.text?.motion(at, direction);
+          if (next) this.cursor = next;
+          else if (!snapshot?.adjusted) return;
+        }
         // A history probe moved the native endpoint even if there was no match.
-        else if (!snapshot?.adjusted) return;
         break;
       }
       case "move": {
@@ -338,7 +355,7 @@ export default class CopyMode extends View {
         this.finish(action);
         return;
     }
-    if (this.anchor && mode !== "move") {
+    if (this.anchor && this.mode !== "move") {
       const min = Math.max(0, this.anchor.row - MAX_HISTORY_ROWS + 1);
       const max = Math.min(grid.total - 1, this.anchor.row + MAX_HISTORY_ROWS - 1);
       this.cursor = { ...this.cursor, row: clamp(this.cursor.row, min, max) };

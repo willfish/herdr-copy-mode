@@ -29,6 +29,10 @@ The standalone binding takes `Ctrl+B [` away from programs in the focused termin
 | `{` / `}` | Move to the previous or next blank row |
 | `v` or `Space` | Anchor characterwise selection; movement now extends it |
 | `V` | Select whole display rows; motions that change rows extend the range |
+| `vau` | Select an HTTP(S) or `www.` URL, without surrounding sentence punctuation |
+| `vaa` | Select the whole row of a recognized agent resume command |
+| `vii` | Select the indentation block at the cursor, including blank rows |
+| `vi{` / `va{` | Select inside or around a balanced pair of braces |
 | `y` or `Enter` | Copy the visual selection and quit; outside visual mode, just quit |
 | `q` or `Esc` | Quit without yanking |
 | `/` | Leave copy mode and open the same pane's built-in find bar |
@@ -37,13 +41,15 @@ The pane returns to its entry scroll offset when copy mode closes, as long as th
 
 Word motions can cross blank and wrapped rows, in move mode or with either visual selection. `V` counts wrapped rows separately. Selections span at most 1,000 display rows, including the anchor. `Ctrl+B` as a page key is unavailable if your configured prefix captures it; `PageUp` still works.
 
+In visual mode, `au`, `aa`, `ii`, `i{` and `a{` replace the existing selection; they do nothing in move mode. URLs, agent commands and braces use the object at the cursor, or the next one in reading order. Agent commands recognize `claude --resume`, `agy --conversation=`, `pi --session`, `opencode -s`, `codex resume` and `omp --resume`, optionally after indentation or a simple shell prompt. A soft-wrapped command selects all its display rows, but the native clipboard trims trailing spaces. Indentation counts spaces; from a blank row, the next nonblank row sets the indentation level. Braces are matched as terminal text, including braces inside strings and comments.
+
 Text motions read fresh terminal text on demand, up to 1,000 history lines on the primary screen and none on the alternate screen. Desktop exposes a native selection but not the styled cell grid, so the mod maps plain text back to display rows and columns. Complex Unicode, reflow, and output that changes during a motion can make this mapping approximate. Navigation and yank still use the live pane.
 
 The native selection starts at the program cursor, or the bottom-left of the viewport if you already scrolled up. This mod is for normal terminal panes, not terminal peeks, swapped-in terminals or layout terminal blocks. Unlike Herdr TUI, this mod doesn't offer in-mode search or `n` / `N`. On Linux, Herdr may update the PRIMARY selection while moving; only an explicit yank writes the regular clipboard.
 
 ## Development
 
-Rust defines the key policy and generates `mods/copy-mode/transitions.js`; `main.js` adapts it to Desktop's focus and terminal commands. `scripts/check` also uses Node.js 22.15 or later to test word motions. A user installing the mod needs neither toolchain.
+Rust defines the key policy and generates `mods/copy-mode/transitions.js`; `main.js` adapts it to Desktop's focus and terminal commands. `scripts/check` also uses Node.js 22.15 or later to test the text motions and objects. A user installing the mod needs neither toolchain.
 
 ```sh
 cargo run --quiet > mods/copy-mode/transitions.js

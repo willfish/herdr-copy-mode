@@ -5,7 +5,9 @@ import test from "node:test";
 // Stub Desktop's imports; exercise the real overlay dispatch and text mapping.
 const herdr = `
   export const hc = (...args) => globalThis.readScreen(...args);
-  export let closeOverlay, focused, nextCommand, panes, props, run, terminals;
+  export const run = (...args) => globalThis.desktopCommand?.(...args);
+  export const closeOverlay = (...args) => globalThis.desktopCommand?.("closeOverlay", ...args);
+  export let focused, nextCommand, panes, props, terminals;
 `;
 const hooks = registerHooks({
   resolve(specifier, context, next) {
@@ -76,4 +78,22 @@ test("screen rows stay aligned when the native grid counts trailing chrome as te
     assert.deepEqual(view.cursor, { row: 4, col });
   }
   assert.deepEqual(view.anchor, cursor);
+});
+
+test("visual objects replace the anchor without copying until explicit yank", async () => {
+  const cursor = { row: 0, col: 2 };
+  const view = await screen(cursor, 1, "seek here\n  (https://example.test), tail");
+  const calls = [];
+  view.renderCursor = () => calls.push(["render", view.anchor, view.cursor]);
+  globalThis.desktopCommand = (...args) => calls.push(args);
+  for (const key of ["a", "u"]) await view.apply(key);
+  assert.deepEqual(calls, []);
+  for (const key of ["V", "a", "u"]) await view.apply(key);
+  const range = ["render", { row: 1, col: 3 }, { row: 1, col: 22 }];
+  assert.deepEqual(calls.pop(), range);
+  assert.equal(view.mode, "visual");
+  for (const key of ["a", "x", "u"]) await view.apply(key);
+  assert.deepEqual(calls, [["render", cursor, cursor]]);
+  await view.apply("y");
+  assert.deepEqual(calls.slice(1), [["terminal.copy"], ["terminal.clear_selection", { terminal: "t1" }], ["closeOverlay", undefined]]);
 });

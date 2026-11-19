@@ -3,6 +3,32 @@ const separators = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 const space = /^\p{White_Space}$/u;
 const mark = /^\p{Mark}$/u;
 const emoji = /^\p{Emoji_Presentation}$/u;
+const sessionArg = String.raw`(?!-)[A-Za-z0-9_./~-]{8,}`;
+const resumeCommand = new RegExp(
+  String.raw`^ *(?:(?:[\w.@~:/-]+ *)?[$%#>❯➜] *)?(?:claude +--resume +|agy +--conversation=|pi +--session +|opencode +-s +|codex +resume +|omp +--resume +)` +
+  String.raw`(?:${sessionArg}|<${sessionArg}>|"${sessionArg}"|'${sessionArg}')(?!\S)`,
+);
+
+function* urlMatches(line) {
+  const host = /^(?:https?:\/\/|(?=www\.))([a-z\d]+(?:-+[a-z\d]+)*(?:\.[a-z\d]+(?:-+[a-z\d]+)*)*)(?::\d+)?(?=[/?#]|$)/i;
+  for (const match of line.matchAll(/(?:^|[^\p{L}\p{N}_@./-])((?:https?:\/\/|www\.)[^\s<>"'`[\]{}]+)/giu)) {
+    const raw = match[1];
+    let balance = 0;
+    for (const ch of raw) {
+      if (ch === "(") balance++;
+      if (ch === ")") balance--;
+    }
+    let length = raw.length;
+    while (length && (/[.,;:!?]/.test(raw[length - 1]) || (raw[length - 1] === ")" && balance < 0))) {
+      if (raw[--length] === ")") balance++;
+    }
+    const value = raw.slice(0, length);
+    const authority = host.exec(value);
+    if (authority && (!/^www\./i.test(value) || authority[1].includes("."))) {
+      yield { index: match.index + match[0].length - raw.length, length };
+    }
+  }
+}
 
 function width(ch) {
   const n = ch.codePointAt(0);
@@ -20,7 +46,10 @@ function cells(text) {
   const result = [];
   let join = false;
   let regional = false;
+  let index = 0;
   for (const ch of text) {
+    const offset = index;
+    index += ch.length;
     const n = ch.codePointAt(0);
     const flag = n >= 0x1f1e6 && n <= 0x1f1ff;
     const prev = result.at(-1);
@@ -32,7 +61,7 @@ function cells(text) {
       regional = false;
       continue;
     }
-    result.push({ width: width(ch), kind: space.test(ch) ? 0 : separators.includes(ch) ? 1 : 2 });
+    result.push({ index: offset, width: width(ch), kind: space.test(ch) ? 0 : separators.includes(ch) ? 1 : 2 });
     join = false;
     regional = flag;
   }
@@ -42,31 +71,99 @@ function cells(text) {
 export function terminalText(text, cols, total, bounds) {
   const rows = [];
   const streams = [];
+  const indents = [];
   for (const line of text.split("\n")) {
-    const stream = [];
-    streams.push(stream);
+    const cellsInLine = [];
+    const firstRow = rows.length;
+    const indent = /^ */.exec(line)[0].length;
     let row = [];
     rows.push(row);
+    indents.push(indent);
     let col = 0;
     for (const cell of cells(line)) {
       if (col + cell.width > cols) {
         row = [];
         rows.push(row);
+        indents.push(indent);
         col = 0;
       }
       const point = { row: rows.length - 1, col, ...cell };
       row.push(point);
-      stream.push(point);
+      cellsInLine.push(point);
       col += cell.width;
     }
+    streams.push({ line, cells: cellsInLine, firstRow, lastRow: rows.length - 1 });
   }
   const first = bounds.first ?? bounds.last + 1 - rows.length;
   const physicalRow = (row) => row < Math.max(0, first) || row >= total ? null
     : rows[row - first] ?? [];
+  const rank = (point) => point.row * cols + point.col;
+  const cursorRank = (at, row) => {
+    const current = row?.find(({ col, width }) => at.col >= col && at.col < col + width);
+    return rank(current ? { row: at.row, col: current.col } : at);
+  };
+  const point = (cell) => ({ row: cell.row + first, col: cell.col });
+  const wholeRows = (start, end) => ({ start: { row: start, col: 0 }, end: { row: end, col: cols - 1 } });
+  const retained = ({ start, end }) => start.row >= 0 && end.row < total;
+
+  function* ranges(key) {
+    if (key === "a{" || key === "i{") {
+      const stack = [];
+      let previous = null;
+      for (const { line, cells } of streams) {
+        for (const cell of cells) {
+          const top = stack.at(-1);
+          if (top && !top.inner) top.inner = cell;
+          const ch = line[cell.index];
+          if (ch === "{") stack.push({ outer: cell, inner: null });
+          if (ch === "}" && top) {
+            stack.pop();
+            const start = point(top.outer);
+            const end = point(cell);
+            const selection = key === "a{" ? { start, end }
+              : top.inner === cell ? null : { start: point(top.inner), end: point(previous) };
+            yield { start, end, selection };
+          }
+          previous = cell;
+        }
+      }
+      return;
+    }
+    for (const { line, cells, firstRow, lastRow } of streams) {
+      if (key === "aa" && resumeCommand.test(line)) {
+        yield wholeRows(first + firstRow, first + lastRow);
+      } else if (key === "au") {
+        let i = 0;
+        for (const { index, length } of urlMatches(line)) {
+          while (i < cells.length && cells[i].index < index) i++;
+          if (cells[i]?.index !== index) continue;
+          const start = point(cells[i]);
+          while (i + 1 < cells.length && cells[i + 1].index < index + length) i++;
+          yield { start, end: point(cells[i]) };
+        }
+      }
+    }
+  }
+
+  function indentation(at) {
+    const min = Math.max(first, 0);
+    const max = Math.min(first + rows.length, total) - 1;
+    const blank = (row) => rows[row - first].every(({ kind }) => !kind);
+    let row = Math.max(min, at.row);
+    while (row <= max && blank(row)) row++;
+    if (row > max) return null;
+    const level = indents[row - first];
+    const belongs = (n) => blank(n) || indents[n - first] >= level;
+    let start = row;
+    let end = row;
+    while (start > min && belongs(start - 1)) start--;
+    while (end < max && belongs(end + 1)) end++;
+    return wholeRows(start, end);
+  }
 
   function spans(big) {
     const result = [];
-    for (const stream of streams) {
+    for (const { cells: stream } of streams) {
       let run;
       for (const cell of stream) {
         const kind = big && cell.kind ? 1 : cell.kind;
@@ -74,12 +171,12 @@ export function terminalText(text, cols, total, bounds) {
           run = null;
           continue;
         }
-        const point = { row: cell.row + first, col: cell.col };
+        const at = point(cell);
         if (run?.kind !== kind) {
-          run = { kind, start: point, end: point };
+          run = { kind, start: at, end: at };
           result.push(run);
         } else {
-          run.end = point;
+          run.end = at;
         }
       }
     }
@@ -90,6 +187,25 @@ export function terminalText(text, cols, total, bounds) {
   const bigWords = spans(true);
   return {
     row: physicalRow,
+    object(at, key) {
+      if (key === "ii") return indentation(at);
+      const pos = cursorRank(at, physicalRow(at.row));
+      let containing;
+      let next;
+      for (const range of ranges(key)) {
+        if (!retained(range)) continue;
+        const start = rank(range.start);
+        if (start <= pos && rank(range.end) >= pos) {
+          // Nested braces prefer the innermost enclosing pair.
+          if (!containing || start > rank(containing.start)) containing = range;
+        } else if (start > pos && (!next || start < rank(next.start))) {
+          next = range;
+        }
+      }
+      const found = containing ?? next;
+      if (!found) return null;
+      return Object.hasOwn(found, "selection") ? found.selection : found;
+    },
     motion(at, key) {
       const row = physicalRow(at.row);
       if (!row) return null;
@@ -105,9 +221,7 @@ export function terminalText(text, cols, total, bounds) {
         return null;
       }
 
-      const rank = (point) => point.row * cols + point.col;
-      const current = row.find(({ col, width }) => at.col >= col && at.col < col + width);
-      const pos = rank(current ? { row: at.row, col: current.col } : at);
+      const pos = cursorRank(at, row);
       const word = key === key.toUpperCase() ? bigWords : words;
       switch (key.toLowerCase()) {
         case "w":
