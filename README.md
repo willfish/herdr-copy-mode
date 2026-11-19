@@ -2,7 +2,7 @@
 
 Vim-style keyboard selection for Herdr Desktop, like `prefix+[` in tmux or the Herdr TUI. You move and select in the pane itself, including scrollback, then yank to the clipboard. No popup, pager or extra terminal.
 
-![Native terminal selection in a synthetic Herdr Desktop session](preview.png)
+![Copy mode selecting words, a URL and an OpenCode resume command, then pasting them](demo.gif)
 
 Requires **Herdr Desktop 0.1.16 or later**. Verified on Linux.
 
