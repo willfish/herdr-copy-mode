@@ -42,10 +42,16 @@ test("agent commands select whole rows including prompts, padding and soft wraps
   assert.deepEqual(soft.object(at(1, 10), "aa"), range(0, 0, 1, 15));
 });
 
+test("labelled session output selects the command row, with spaces and alignment", () => {
+  const model = text("Session   Jibbery origin question\nContinue   opencode -s ses_e0be9f7cdffeRa2XPiv4cNF9Cn\nfutile text");
+  assert.deepEqual(model.object(at(1, 9), "aa"), range(1, 0, 1, 79));
+  assert.deepEqual(model.object(at(1, 13), "aa"), range(1, 0, 1, 79));
+});
+
 test("agent detection skips prose, unknown flags and short IDs", () => {
-  const model = text("please run claude --resume synthetic-1234\nclaude --resume short\npi --resume synthetic-1234\nopencode -s --unrelated\n  omp --resume /some/path");
-  assert.deepEqual(model.object(at(0, 0), "aa"), range(4, 0, 4, 79));
-  assert.equal(model.object(at(5, 0), "aa"), null);
+  const model = text("please resume work\nclaude --resume short\nopencode -s --unrelated\n  omp --resume /some/path");
+  assert.deepEqual(model.object(at(0, 0), "aa"), range(3, 0, 3, 79));
+  assert.equal(model.object(at(4, 0), "aa"), null);
 });
 
 test("line objects select the current line only, with and without explicit padding", () => {

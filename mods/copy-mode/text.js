@@ -4,9 +4,11 @@ const space = /^\p{White_Space}$/u;
 const mark = /^\p{Mark}$/u;
 const emoji = /^\p{Emoji_Presentation}$/u;
 const sessionArg = String.raw`(?!-)[A-Za-z0-9_./~-]{8,}`;
+// The command can have leading harness labels (Session/Continue), so it only needs a word boundary.
 const resumeCommand = new RegExp(
-  String.raw`^ *(?:(?:[\w.@~:/-]+ *)?[$%#>❯➜] *)?(?:claude +--resume +|agy +--conversation=|pi +--session +|opencode +-s +|codex +resume +|omp +--resume +)` +
+  String.raw`(?:^|[^\p{L}\p{N}_])(?:claude\s+--resume\s+|agy\s+--conversation=|pi\s+--session\s+|opencode\s+-s\s+|codex\s+resume\s+|omp\s+--resume\s+)` +
   String.raw`(?:${sessionArg}|<${sessionArg}>|"${sessionArg}"|'${sessionArg}')(?!\S)`,
+  "u",
 );
 
 function* urlMatches(line) {
