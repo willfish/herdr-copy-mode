@@ -4,12 +4,18 @@ const space = /^\p{White_Space}$/u;
 const mark = /^\p{Mark}$/u;
 const emoji = /^\p{Emoji_Presentation}$/u;
 const sessionArg = String.raw`(?!-)[A-Za-z0-9_./~-]{8,}`;
-// The command can have leading harness labels (Session/Continue), so it only needs a word boundary.
-const resumeCommand = new RegExp(
-  String.raw`(?:^|[^\p{L}\p{N}_])(?:claude\s+--resume\s+|agy\s+--conversation=|pi\s+--session\s+|opencode\s+-s\s+|codex\s+resume\s+|omp\s+--resume\s+)` +
+// The command can have any row prefix/label; only its own span is selected.
+const agentCommand = new RegExp(
+  String.raw`(?:claude\s+--resume\s+|agy\s+--conversation=|pi\s+--session\s+|opencode\s+-s\s+|codex\s+resume\s+|omp\s+--resume\s+)` +
   String.raw`(?:${sessionArg}|<${sessionArg}>|"${sessionArg}"|'${sessionArg}')(?!\S)`,
-  "u",
+  "gu",
 );
+function* resumeCommands(line) {
+  for (const match of line.matchAll(agentCommand)) {
+    if (match.index > 0 && /[\p{L}\p{N}_]/u.test(line[match.index - 1])) continue;
+    yield { index: match.index, length: match[0].length };
+  }
+}
 
 function* urlMatches(line) {
   const host = /^(?:https?:\/\/|(?=www\.))([a-z\d]+(?:-+[a-z\d]+)*(?:\.[a-z\d]+(?:-+[a-z\d]+)*)*)(?::\d+)?(?=[/?#]|$)/i;
@@ -137,8 +143,16 @@ export function terminalText(text, cols, total, bounds) {
         yield { start: point(innerFirst), end: point(cells.findLast(({ kind }) => kind)) };
       } else if (key === "al" && cells.length) {
         yield wholeRows(first + firstRow, first + lastRow);
-      } else if (key === "aa" && resumeCommand.test(line)) {
-        yield wholeRows(first + firstRow, first + lastRow);
+      } else if (key === "aa") {
+        let i = 0;
+        for (const { index, length } of resumeCommands(line)) {
+          while (i < cells.length && cells[i].index < index) i++;
+          if (cells[i]?.index !== index) continue;
+          const start = point(cells[i]);
+          const endIndex = index + length;
+          while (i + 1 < cells.length && cells[i + 1].index < endIndex) i++;
+          yield { start, end: point(cells[i]) };
+        }
       } else if (key === "au") {
         let i = 0;
         for (const { index, length } of urlMatches(line)) {

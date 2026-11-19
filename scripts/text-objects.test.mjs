@@ -25,7 +25,7 @@ test("URL endpoints follow soft wraps but URLs never join hard lines", () => {
   assert.equal(text("https://\nexample.test").object(at(0, 0), "au"), null);
 });
 
-test("agent commands select whole rows including prompts, padding and soft wraps", () => {
+test("agent commands select just the pasted command, with prompts, padding and wraps", () => {
   const commands = [
     "claude --resume synthetic-0001",
     "agy --conversation=synthetic-0002",
@@ -34,23 +34,28 @@ test("agent commands select whole rows including prompts, padding and soft wraps
     "codex resume <SESSION_ID>",
     "omp --resume './sessions/synthetic-0006'",
   ];
-  const model = text(commands.map((line) => `  user@host:~$ ${line}  `).join("\n"));
+  const lines = commands.map((line) => `  user@host:~$ ${line}  `).join("\n");
+  const model = text(lines);
   for (let row = 0; row < commands.length; row++) {
-    assert.deepEqual(model.object(at(row, 78), "aa"), range(row, 0, row, 79));
+    const start = lines.split("\n")[row].indexOf(commands[row]);
+    assert.deepEqual(model.object(at(row, start + 2), "aa"), range(row, start, row, start + commands[row].length - 1));
   }
-  const soft = text(`❯ ${commands[0]}\nNext row`, 16);
-  assert.deepEqual(soft.object(at(1, 10), "aa"), range(0, 0, 1, 15));
+  assert.deepEqual(text(`❯ ${commands[0]}\nNext row`, 16).object(at(1, 10), "aa"), range(0, 2, 1, 15));
 });
 
-test("labelled session output selects the command row, with spaces and alignment", () => {
-  const model = text("Session   Jibbery origin question\nContinue   opencode -s ses_e0be9f7cdffeRa2XPiv4cNF9Cn\nfutile text");
-  assert.deepEqual(model.object(at(1, 9), "aa"), range(1, 0, 1, 79));
-  assert.deepEqual(model.object(at(1, 13), "aa"), range(1, 0, 1, 79));
+test("labelled session output selects the command only, not the row label or padding", () => {
+  const command = "opencode -s ses_e0be9f7cdffeRa2XPiv4cNF9Cn";
+  const model = text(`Session   Jibbery origin question\nContinue   ${command}   \nfutile text`);
+  const start = `Continue   ${command}   `.indexOf(command);
+  assert.deepEqual(model.object(at(1, 9), "aa"), range(1, start, 1, start + command.length - 1));
+  assert.deepEqual(model.object(at(1, 13), "aa"), range(1, start, 1, start + command.length - 1));
 });
 
 test("agent detection skips prose, unknown flags and short IDs", () => {
   const model = text("please resume work\nclaude --resume short\nopencode -s --unrelated\n  omp --resume /some/path");
-  assert.deepEqual(model.object(at(0, 0), "aa"), range(3, 0, 3, 79));
+  const command = "omp --resume /some/path";
+  const start = `  ${command}`.indexOf(command);
+  assert.deepEqual(model.object(at(0, 0), "aa"), range(3, start, 3, start + command.length - 1));
   assert.equal(model.object(at(4, 0), "aa"), null);
 });
 
