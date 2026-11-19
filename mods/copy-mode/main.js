@@ -53,25 +53,14 @@ export default class CopyMode extends View {
     this.handle.focus();
     // The program cursor may not be visible in an already scrolled pane.
     const at = scroll?.from_bottom ? { row: scroll.offset + scroll.len - 1, col: 0 } : "cursor";
+    this.entryGrid = this.grid();
     this.select(at);
     this.ready = this.initializeCursor();
   }
 
   async initializeCursor() {
-    // `end` supplies the last nonempty physical row, unlike hc's trimmed text.
-    // Take the measurement before the user can anchor a visual selection.
-    const grid = this.grid();
-    this.adjust("end");
     await this.flush();
-    const initial = this.selection();
-    if (!initial) return;
-    this.cursor = initial.start;
-    this.select(this.cursor);
-    if (grid) {
-      this.textOrigin = { grid, last: initial.end.row };
-      this.scrollTo(grid.offset);
-    }
-    await this.flush();
+    this.cursor = this.selection()?.start;
   }
 
   flush() {
@@ -164,23 +153,38 @@ export default class CopyMode extends View {
   }
 
   async readText(grid) {
-    const origin = this.textOrigin;
-    if (!origin || !sameGeometry(origin.grid, grid) || origin.grid.total !== grid.total) return null;
-    if (!this.textRead) {
+    let adjusted = false;
+    const sameGrid = () => {
+      const now = this.grid();
+      return this.target() && now && sameGeometry(grid, now) && now.total === grid.total;
+    };
+    try {
+      // A repaint can change every word without changing the grid geometry.
       // A history read on the alternate screen can send scroll input to the PTY.
       const lines = grid.primary ? Math.min(MAX_HISTORY_ROWS, grid.total - grid.height) : 0;
-      this.textRead = hc(["read", this.terminal, "--json", "--lines", String(lines)])
-        .then(({ code, stdout }) => {
-          if (code !== 0) return null;
-          const { how, text } = JSON.parse(stdout);
-          if (how !== "screen" && !(grid.primary && how === "history")) return null;
-          const now = this.grid();
-          if (!now || !sameGeometry(grid, now) || now.total !== grid.total || typeof text !== "string") return null;
-          this.text = terminalText(text, grid.cols, text ? origin.last : -1, grid.total);
-          return this.text;
-        }).catch(() => null);
+      const { code, stdout } = await hc(["read", this.terminal, "--json", "--lines", String(lines)]);
+      if (code !== 0 || !sameGrid()) return null;
+      const { how, text } = JSON.parse(stdout);
+      if (typeof text !== "string") return null;
+      if (how === "screen") {
+        // The screen read preserves leading blank rows, but drops trailing
+        // whitespace-only rows even when the native grid has text cells there.
+        return { text: terminalText(text, grid.cols, grid.total, { first: grid.total - grid.height }) };
+      } else if (grid.primary && how === "history") {
+        // History may return fewer rows than requested. Measure its bottom
+        // against the live grid rather than keeping an endpoint from entry.
+        this.adjust("end");
+        adjusted = true;
+        await this.flush();
+        const last = this.selection()?.end.row;
+        if (last != null && sameGrid()) {
+          return { text: terminalText(text, grid.cols, grid.total, { last: text ? last : -1 }), adjusted };
+        }
+      }
+    } catch {
+      // A failed text read leaves the copy cursor where it was.
     }
-    return this.textRead;
+    return { adjusted };
   }
 
   moveUp(distance, height) {
@@ -278,7 +282,7 @@ export default class CopyMode extends View {
       this.finish("cancel");
       return;
     }
-    if (this.textOrigin && !sameGeometry(this.textOrigin.grid, grid)) {
+    if (this.entryGrid && !sameGeometry(this.entryGrid, grid)) {
       this.finish("cancel");
       return;
     }
@@ -294,11 +298,18 @@ export default class CopyMode extends View {
         this.anchor = at;
         break;
       case "text": {
-        const text = await this.readText(grid);
+        const snapshot = await this.readText(grid);
         if (!this.target()) return;
-        const next = text?.motion(at, direction);
-        if (!next) return;
-        this.cursor = next;
+        const now = this.grid();
+        if (!now || !sameGeometry(grid, now)) {
+          this.finish("cancel");
+          return;
+        }
+        this.text = snapshot?.text;
+        const next = this.text?.motion(at, direction);
+        if (next) this.cursor = next;
+        // A history probe moved the native endpoint even if there was no match.
+        else if (!snapshot?.adjusted) return;
         break;
       }
       case "move": {

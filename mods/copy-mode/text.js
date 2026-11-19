@@ -1,5 +1,4 @@
-// hc's plain-text read joins soft wraps and drops trailing empty rows. Restore
-// display coordinates from the width and the last text row reported by Desktop.
+// hc's plain-text read joins soft wraps and drops trailing empty rows.
 const separators = "!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~";
 const space = /^\p{White_Space}$/u;
 const mark = /^\p{Mark}$/u;
@@ -40,7 +39,7 @@ function cells(text) {
   return result;
 }
 
-export function terminalText(text, cols, lastTextRow, total) {
+export function terminalText(text, cols, total, bounds) {
   const rows = [];
   const streams = [];
   for (const line of text.split("\n")) {
@@ -61,9 +60,9 @@ export function terminalText(text, cols, lastTextRow, total) {
       col += cell.width;
     }
   }
-  const first = lastTextRow + 1 - rows.length;
-  const physicalRow = (row) => row < 0 || row >= total ? null
-    : row > lastTextRow ? [] : rows[row - first] ?? null;
+  const first = bounds.first ?? bounds.last + 1 - rows.length;
+  const physicalRow = (row) => row < Math.max(0, first) || row >= total ? null
+    : rows[row - first] ?? [];
 
   function spans(big) {
     const result = [];
