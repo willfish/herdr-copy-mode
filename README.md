@@ -1,62 +1,94 @@
 # Herdr Copy Mode
 
-Use Vim-style keys to select and copy text directly in a Herdr Desktop terminal pane, including its scrollback. The selection stays in the original pane.
+Vim-style keyboard selection for Herdr Desktop, like `prefix+[` in tmux or the Herdr TUI. You move and select in the pane itself, including scrollback, then yank to the clipboard. No popup, pager or extra terminal.
 
 ![Native terminal selection in a synthetic Herdr Desktop session](preview.png)
 
-Requires **Herdr Desktop 0.1.16 or later**, not the Herdr TUI. Verified on Linux. No runtime dependencies beyond Herdr and its core.
+Requires **Herdr Desktop 0.1.16 or later**. Verified on Linux.
 
 ## Install
 
-1. Copy `mods/copy-mode` into `~/.config/herdr-app/mods/` (or your `HERDR_APP_HOME`).
-2. Merge the `terminal` entry from [`keys.json`](keys.json) into your existing keys. The default is `Ctrl+B`, then `[`. Do not replace your entire keys file. If you already use a prefix mod, add `[` to that mod's bindings to dispatch `mod.open:copy-mode` instead.
-3. Run `herdr-app check ~/.config/herdr-app/mods/copy-mode`.
+1. Copy `mods/copy-mode` into `~/.config/herdr-app/mods/`.
+2. Add the binding from [`keys.json`](keys.json) to the `terminal` section of your own `keys.json`. Merge it; don't replace the file.
+3. Check it loads: `herdr-app check ~/.config/herdr-app/mods/copy-mode`
 
-The standalone binding takes `Ctrl+B [` away from programs in the focused terminal. Choose another prefix if you need that exact sequence inside tmux.
+The default binding is `Ctrl+B`, then `[`. Pick another if a program in the pane, such as tmux, needs that sequence.
+
+## Quick start
+
+| You want to | Press |
+| --- | --- |
+| Copy a word | `Ctrl+B [`, move onto it, `v e y` |
+| Copy a whole line | `Ctrl+B [`, move onto it, `V y` |
+| Copy a URL | `Ctrl+B [`, `v a u y` |
+| Copy an agent's resume command | `Ctrl+B [`, `v a a y` |
+| Leave without copying | `q` or `Esc` |
 
 ## Keys
 
-| Key | Action |
+### Move
+
+| Key | Moves to |
 | --- | --- |
-| `Ctrl+B`, then `[` | Enter copy mode in the active terminal pane |
-| `h` `j` `k` `l` or arrows | Move left, down, up or right |
-| `PageUp` / `PageDown` or `Ctrl+B` / `Ctrl+F` | Move by a page |
-| `Ctrl+U` / `Ctrl+D` | Move by half a page |
-| `0` / `Home`, `^`, `$` / `End` | Move to column zero, first nonblank, or last character of the display row |
-| `g` / `G` | Move to the oldest or newest retained row |
-| `w` / `b` / `e` | Next word start, previous word start, or next word end; separates punctuation like Herdr TUI |
-| `W` / `B` / `E` | Same motions with whitespace as the only separator |
-| `{` / `}` | Move to the previous or next blank row |
-| `v` or `Space` | Anchor characterwise selection; movement now extends it |
-| `V` | Select whole display rows; motions that change rows extend the range |
-| `vil` | Select the non-space characters in the current line; wraps every display row of a soft-wrapped line |
-| `val` | Select the full current line, including leading and trailing spaces; wraps every display row of a soft-wrapped line |
-| `vau` | Select an HTTP(S) or `www.` URL, without surrounding sentence punctuation |
-| `vaa` | Select the command that resumes an agent session, excluding row labels and padding |
-| `vii` | Select the indentation block at the cursor, including blank rows |
-| `vi{` / `va{` | Select inside or around a balanced pair of braces |
-| `y` or `Enter` | Copy the visual selection and quit; outside visual mode, just quit |
-| `q` or `Esc` | Quit without yanking |
-| `/` | Leave copy mode and open the same pane's built-in find bar |
+| `h` `j` `k` `l`, arrows | Left, down, up, right |
+| `w` `b` `e` | Next word start, previous word start, word end. Punctuation counts as its own word |
+| `W` `B` `E` | Same, but only whitespace separates words, so `src/main.rs` is one word |
+| `0` `^` `$` | Start of row, first non-blank, last character |
+| `{` `}` | Previous or next blank row |
+| `Ctrl+U` `Ctrl+D` | Half a page up or down |
+| `PageUp` `PageDown` | A page up or down (`Ctrl+B` / `Ctrl+F` too, unless `Ctrl+B` is your prefix) |
+| `g` `G` | Oldest or newest line in the scrollback |
 
-The pane returns to its entry scroll offset when copy mode closes, as long as the history is still retained. Search uses Herdr's native find bar: type the query, navigate with `Enter` / `Shift+Enter`, and close with `Esc`. Search does not move the copy cursor or resume a visual selection. Start copy mode again after closing find.
+### Select and copy
 
-Word motions can cross blank and wrapped rows, in move mode or with either visual selection. `V` counts wrapped rows separately. Selections span at most 1,000 display rows, including the anchor. `Ctrl+B` as a page key is unavailable if your configured prefix captures it; `PageUp` still works.
+| Key | Does |
+| --- | --- |
+| `v` or `Space` | Start a character selection. Movement extends it |
+| `V` | Select whole rows. Up and down extend it |
+| `y` or `Enter` | Copy the selection and leave |
+| `q` or `Esc` | Leave without copying |
+| `/` | Leave and open Herdr's find bar in the same pane |
 
-In visual mode, `al`, `il`, `au`, `aa`, `ii`, `i{` and `a{` replace the existing selection; they do nothing in move mode. `il` selects from the first to the last non-space cell; `al` selects all cells on it. Neither seeks to another line or span of wrapped output. URLs, agent commands and braces use the object at the cursor, or the next one in reading order. Agent commands recognize `claude --resume`, `agy --conversation=`, `pi --session`, `opencode -s`, `codex resume` and `omp --resume` anywhere in the row; their argument must still be a real ID or path-like token. Row labels such as `Continue`, prompts and trailing padding are excluded from the selected command. A soft-wrapped command selects all its display rows. A soft-wrapped command selects all its display rows, but the native clipboard trims trailing spaces. Indentation counts spaces; from a blank row, the next nonblank row sets the indentation level. Braces are matched as terminal text, including braces inside strings and comments.
+### Text objects
 
-Text motions read fresh terminal text on demand, up to 1,000 history lines on the primary screen and none on the alternate screen. Desktop exposes a native selection but not the styled cell grid, so the mod maps plain text back to display rows and columns. Complex Unicode, reflow, and output that changes during a motion can make this mapping approximate. Navigation and yank still use the live pane.
+Press `v` first, then the object. Each one replaces the current selection.
 
-The native selection starts at the program cursor, or the bottom-left of the viewport if you already scrolled up. This mod is for normal terminal panes, not terminal peeks, swapped-in terminals or layout terminal blocks. Unlike Herdr TUI, this mod doesn't offer in-mode search or `n` / `N`. On Linux, Herdr may update the PRIMARY selection while moving; only an explicit yank writes the regular clipboard.
+| Keys | Selects | Example: cursor anywhere on… | …selects |
+| --- | --- | --- | --- |
+| `vil` | The line, without leading or trailing spaces | `␣␣npm run build␣␣` | `npm run build` |
+| `val` | The whole line, spaces included | `␣␣npm run build␣␣` | `␣␣npm run build␣␣` |
+| `vau` | A URL, without trailing punctuation | `see (https://example.com/x).` | `https://example.com/x` |
+| `vaa` | An agent's resume command | `Continue   opencode -s ses_e0be…` | `opencode -s ses_e0be…` |
+| `vii` | The block at the cursor's indentation, blank lines included | an indented function body | the whole body |
+| `vi{` `va{` | Inside or around the nearest `{…}` | `{a {b} c}` with the cursor on `b` | `b` or `{b}` |
+
+`vau`, `vaa` and the brace objects jump forward to the next match if the cursor isn't on one, so you can grab the next URL without moving there first. `vil`, `val` and `vii` only act on where the cursor is.
+
+`vaa` recognises these resume commands, wherever they appear in a row:
+
+```text
+claude --resume <id>        agy --conversation=<id>     pi --session <id>
+opencode -s <id>            codex resume <id>           omp --resume <id-or-path>
+```
+
+## Good to know
+
+- Copy mode starts at the program's cursor, or the bottom-left of the screen if you've scrolled up. When you leave, the pane scrolls back to where it was.
+- Only `y` writes the clipboard. On Linux, Herdr may update the PRIMARY selection as you move.
+- Search hands off to Herdr's native find bar. It can't move the copy cursor to a match, and there's no `n` / `N`.
+- Motions and text objects read up to 1,000 lines of scrollback, or just the visible screen in full-screen apps such as editors.
+- The mod maps plain terminal text back to screen cells. Complex Unicode, or output that changes mid-motion, can occasionally land a cell off.
+- Brace objects match raw text, so braces inside strings and comments count. Indentation counts spaces, not tabs.
+- Works in normal terminal panes, not terminal peeks or layout terminal blocks.
 
 ## Development
 
-Rust defines the key policy and generates `mods/copy-mode/transitions.js`; `main.js` adapts it to Desktop's focus and terminal commands. `scripts/check` also uses Node.js 22.15 or later to test the text motions and objects. A user installing the mod needs neither toolchain.
+Rust defines the key policy and generates `mods/copy-mode/transitions.js`; `main.js` adapts it to Herdr Desktop. Installing the mod needs neither Rust nor Node.
 
 ```sh
 cargo run --quiet > mods/copy-mode/transitions.js
-./scripts/check
+./scripts/check          # Rust checks plus Node 22.15+ tests
 herdr-app check mods/copy-mode
 ```
 
-MIT, like the companion Rust plugins. The key behavior follows [Herdr TUI 0.9.5](https://github.com/herdrdev/herdr/tree/v0.9.5/src/client/shell) where the Desktop API allows it.
+MIT. Motions follow [Herdr TUI 0.9.5](https://github.com/herdrdev/herdr/tree/v0.9.5/src/client/shell) where the Desktop API allows.
